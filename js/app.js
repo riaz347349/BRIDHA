@@ -151,15 +151,30 @@ class DressVisualiser {
 
         try {
             await this.startCamera();
-        } catch {
+        } catch (err) {
+            console.error('Camera error:', err);
             document.getElementById('loading-screen').classList.add('hidden');
             document.getElementById('error-screen').classList.remove('hidden');
             return;
         }
 
-        this.setLoadingText('Loading AI model…');
-        await this.loadPoseModel();
+        this.setLoadingText('Loading AI model… (first load may take ~15s)');
 
+        // Warn user if taking a long time
+        const slowTimer = setTimeout(() => {
+            this.setLoadingText('Still loading — please keep the page open…');
+        }, 12000);
+
+        try {
+            await this.loadPoseModel();
+        } catch (err) {
+            clearTimeout(slowTimer);
+            console.error('Model load error:', err);
+            this.showErrorScreen('Failed to load AI model. Please check your internet connection and reload.');
+            return;
+        }
+
+        clearTimeout(slowTimer);
         this.setLoadingText('Preparing dresses…');
         this.buildUI();
         this.selectDress(DRESSES[0]);
@@ -178,6 +193,14 @@ class DressVisualiser {
 
     setLoadingText(t) {
         document.getElementById('loading-text').textContent = t;
+    }
+
+    showErrorScreen(msg) {
+        document.getElementById('loading-screen').classList.add('hidden');
+        const err = document.getElementById('error-screen');
+        const p = err.querySelector('p');
+        if (p && msg) p.textContent = msg;
+        err.classList.remove('hidden');
     }
 
     /* ── Camera ─────────────────────────────────────────────────── */
@@ -212,7 +235,25 @@ class DressVisualiser {
 
     /* ── Pose model ─────────────────────────────────────────────── */
     async loadPoseModel() {
-        await tf.ready();
+        // Try backends in order of preference — WebGL is fastest but WASM
+        // is a reliable fallback on older Android devices
+        const backends = ['webgl', 'wasm', 'cpu'];
+        let backendReady = false;
+
+        for (const backend of backends) {
+            try {
+                await tf.setBackend(backend);
+                await tf.ready();
+                console.log('TF backend:', backend);
+                backendReady = true;
+                break;
+            } catch (e) {
+                console.warn(`Backend "${backend}" unavailable:`, e.message);
+            }
+        }
+
+        if (!backendReady) throw new Error('No TF backend available');
+
         this.detector = await poseDetection.createDetector(
             poseDetection.SupportedModels.MoveNet,
             {
